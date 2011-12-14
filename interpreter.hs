@@ -28,19 +28,19 @@ evaluate' (P.Call func args) = do
   args' <- mapM evaluate' args
   func' <- evaluate' func
   call func' args'
-evaluate' (P.Var "print") = return $ Funcref "print" builtinPrint
-evaluate' (P.Var "+") = return $ Funcref "+" builtinPlus
-evaluate' (P.Var name) =
+evaluate' (P.Atom "print") = return $ Funcref "print" builtinPrint
+evaluate' (P.Atom "+") = return $ Funcref "+" builtinPlus
+evaluate' (P.Atom name) =
   (maybe noVar return . M.lookup name) =<< S.get
   where noVar = do
-          liftIO $ print $ "no var <" ++ name ++ ">"
+          liftIO $ print $ "no Atom <" ++ name ++ ">"
           return $ Undefined
 evaluate' (P.Val x) = return $ IntValue x
-evaluate' expr@(P.List (P.Var x : xs)) = specialForm x xs
+evaluate' (P.List (P.Atom x : xs)) = specialForm x xs
 
 specialForm "begin" [] = error "empty begin -- must not happen"
 specialForm "begin" xs = last `fmap` mapM evaluate' xs
-specialForm "let" [P.Var name, val, body] = do
+specialForm "let" [P.Atom name, val, body] = do
   env <- S.get
   let before = M.lookup name env
   after <- evaluate' val
@@ -55,7 +55,7 @@ specialForm "lambda" [P.List names, body] = do
   env <- S.get
   return $ Lambda (map unVar names) body env
   where
-    unVar (P.Var x) = x
+    unVar (P.Atom x) = x
     unVar _ = error "omg"
 specialForm "lambda" _ = error "lambda requires 2 params"
 

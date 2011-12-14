@@ -7,7 +7,7 @@ import Data.List (intersperse)
 
 data Expr = List [Expr]
   | Call Expr [Expr]
-  | Var String
+  | Atom String
   | Val Int
   deriving (Show, Read)
 
@@ -15,7 +15,7 @@ join = concat . intersperse " "
 
 formatExpr :: Expr -> String
 formatExpr expr = fst $ S.runState (formatExpr' expr) 0
-formatExpr' (List xs) = do
+
   (x:xs') <- liftDown $ mapM formatExpr' xs
   i <- indent
   case x of
@@ -23,7 +23,7 @@ formatExpr' (List xs) = do
      "let" -> return $ "(let (" ++ join (take 2 xs') ++ ")\n" ++ last xs' ++ ")"
      "lambda" -> return $ "lambda " ++ head xs' ++ " " ++ last xs' ++ ")"
      otherwise -> return $ "(" ++ join (x:xs') ++ ")"
-formatExpr' (Var name) = return name
+formatExpr' (Atom name) = return name
 formatExpr' (Val x) = return $ show x
 formatExpr' (Call func xs) = do
   func' <- liftDown $ formatExpr' func
@@ -59,7 +59,7 @@ parseBegin = P.try $ do
   P.string "begin"
   P.skipMany1 P.space
   xs <- parseExpr `P.sepBy1` P.many1 P.space
-  return $ List $ Var "begin" : xs
+  return $ List $ Atom "begin" : xs
 
 parseLambda = P.try $ do
   P.string "lambda"
@@ -67,7 +67,7 @@ parseLambda = P.try $ do
   names <- parenth $ P.many1 (P.noneOf " )(") `P.sepBy` P.spaces
   P.skipMany1 P.space
   expr <- parseExpr
-  return $ List [Var "lambda", List (map Var names), expr]
+  return $ List [Atom "lambda", List (map Atom names), expr]
 
 parseLet = P.try $ do
   P.string "let"
@@ -79,7 +79,7 @@ parseLet = P.try $ do
     return (name, value)
   P.skipMany1 P.space
   body <- parseExpr
-  return $ List [Var "let", Var name, value, body]
+  return $ List [Atom "let", Atom name, value, body]
 
 parseVal = P.try $ do
   n <- P.many1 P.digit
@@ -87,7 +87,7 @@ parseVal = P.try $ do
 
 parseVar = P.try $ do
   name <- P.many1 $ P.noneOf " )("
-  return $ Var name
+  return $ Atom name
 
 parseCall = P.try $ do
   (x:xs) <- parseExpr `P.sepBy1` P.many1 P.space
