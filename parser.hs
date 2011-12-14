@@ -10,6 +10,7 @@ data Expr = Begin [Expr]
   | Call String [Expr]
   | Var String
   | Val Int
+  | Lambda [String] Expr
   deriving (Show, Read)
 
 formatExpr :: Expr -> String
@@ -18,6 +19,9 @@ formatExpr' (Begin xs) = do
   xs' <- liftDown $ mapM formatExpr' xs
   i <- indent
   return $ i ++ "(begin\n" ++ concat (intersperse "\n" (map (("  " ++ i) ++) xs')) ++ ")"
+formatExpr' (Lambda names expr) = do
+  expr' <- liftDown $ formatExpr' expr
+  return $ "(lambda (" ++ concat (intersperse " " names) ++ ") " ++ expr' ++ ")"
 formatExpr' (Let name value expr) = do
   value' <- formatExpr' value
   expr' <- liftDown $ formatExpr' expr
@@ -46,7 +50,7 @@ main = do
 parse file = either (error . show) id $ P.parse parseExpr "parseExpr" file
 parseExpr = do
   P.skipMany P.space
-  expr <- parseBegin <|> parseLet <|> parseVal <|> parseVar <|> parseCall
+  expr <- parseBegin <|> parseLambda <|> parseLet <|> parseVal <|> parseVar <|> parseCall
   return expr
 
 parseBegin = P.try $ do
@@ -55,6 +59,17 @@ parseBegin = P.try $ do
   xs <- parseExpr `P.sepBy1` P.many1 P.space
   P.char ')'
   return $ Begin xs
+
+parseLambda = P.try $ do
+  P.string "(lambda"
+  P.skipMany1 P.space
+  P.char '('
+  names <- P.many1 (P.noneOf " )(") `P.sepBy` P.spaces
+  P.char ')'
+  P.skipMany1 P.space
+  expr <- parseExpr
+  P.char ')'
+  return $ Lambda names expr
 
 parseLet = P.try $ do
   P.string "(let"

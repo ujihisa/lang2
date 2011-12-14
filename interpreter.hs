@@ -3,6 +3,11 @@ import qualified Control.Monad.Trans.State as S
 import Control.Monad.Trans (liftIO)
 import qualified Data.Map as M
 
+data Value = IntValue Int
+  | Lambda [String] P.Expr (M.Map String Value)
+  | Undefined
+  deriving Show
+
 main = do
   file <- readFile "sample.lisp"
   let expr = P.parse file
@@ -10,10 +15,13 @@ main = do
   putStrLn $ P.formatExpr expr
   print =<< evaluate expr
 
-evaluate :: P.Expr -> IO Int
+evaluate :: P.Expr -> IO Value
 evaluate expr = fst `fmap` S.runStateT (evaluate' expr) M.empty
 evaluate' (P.Begin []) = error "empty begin -- must not happen"
 evaluate' (P.Begin xs) = last `fmap` mapM evaluate' xs
+evaluate' (P.Lambda names body) = do
+  env <- S.get
+  return $ Lambda names body env
 evaluate' (P.Let name val body) = do
   env <- S.get
   let before = M.lookup name env
@@ -34,8 +42,15 @@ evaluate' (P.Var name) =
   (maybe noVar return . M.lookup name) =<< S.get
   where noVar = do
           liftIO $ print $ "no var <" ++ name ++ ">"
-          return 0
-evaluate' (P.Val x) = return x
+          return $ Undefined
+evaluate' (P.Val x) = return $ IntValue x
 
-funcallArb "+" args = return $ sum args
+funcallArb "+" args = do
+  args' <- mapM f args
+  return $ IntValue $ sum args'
+  where
+    f (IntValue x) = return x
+    f x = do
+      liftIO $ print $ "<" ++ show x ++ "> isn't int"
+      return 0
 funcall1 "print" x = liftIO $ print x >> return x
