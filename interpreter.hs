@@ -26,14 +26,16 @@ evaluate expr = fst `fmap` S.runStateT (evaluate' expr) M.empty
 
 evaluate' (P.Atom "print") = return $ Funcref "print" builtinPrint
 evaluate' (P.Atom "+") = return $ Funcref "+" builtinPlus
+evaluate' (P.Atom "-") = return $ Funcref "-" builtinMinus
+evaluate' (P.Atom "==") = return $ Funcref "-" builtinComp
 evaluate' (P.Atom name) =
   (maybe noVar return . M.lookup name) =<< S.get
   where noVar = do
-          liftIO $ print $ "no Atom <" ++ name ++ ">"
+          liftIO $ print $ "no variable <" ++ name ++ ">"
           return $ Undefined
 evaluate' (P.Val x) = return $ IntValue x
 evaluate' (P.List (P.Atom x : xs))
-  | x == "begin" || x == "let" || x == "define" || x == "lambda" = specialForm x xs
+  | x == "begin" || x == "let" || x == "define" || x == "lambda" || x == "if" || x == "comment" = specialForm x xs
 evaluate' (P.List (func : args)) = do
   args' <- mapM evaluate' args
   func' <- evaluate' func
@@ -52,11 +54,20 @@ specialForm "let" [P.List [P.Atom name, val], body] = do
        Nothing -> S.put $ M.delete name env
   return memo
 specialForm "let" _ = error "let requires 2 params"
+specialForm "comment" _ = return Undefined
 specialForm "define" [P.Atom name, val] = do
   env <- S.get
   val' <- evaluate' val
   S.put $ M.insert name val' env
   return val'
+  -- case val' of
+  --      Lambda params expr env -> do
+  --        let val'' = Lambda params expr $ M.insert name val' env
+  --        S.put $ M.insert name val'' env
+  --        return val''
+  --      otherwise -> do
+  --        S.put $ M.insert name val' env
+  --        return val'
 specialForm "define" _ = error "define requires 2 params"
 specialForm "lambda" [P.List names, body] = do
   env <- S.get
@@ -65,6 +76,12 @@ specialForm "lambda" [P.List names, body] = do
     unVar (P.Atom x) = x
     unVar _ = error "omg"
 specialForm "lambda" _ = error "lambda requires 2 params"
+specialForm "if" [cond, thenE, elseE] = do
+  (IntValue cond') <- evaluate' cond
+  if cond' /= 0
+     then evaluate' thenE
+     else evaluate' elseE
+specialForm "if" _ = error "if requires 3 params"
 specialForm x _ = error x
 
 call (Funcref _ f) args = liftIO $ f args
@@ -88,3 +105,11 @@ builtinPlus xs = do
     f x = do
       print $ "<" ++ show x ++ "> isn't int"
       return 0
+builtinMinus xs = do
+  (IntValue x : IntValue y : []) <- return xs
+  return $ IntValue $ x - y
+builtinComp xs = do
+  (IntValue x : IntValue y : []) <- return xs
+  if x == y
+     then return $ IntValue 1
+     else return $ IntValue 0

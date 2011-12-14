@@ -11,5 +11,9 @@
       (print (+ x 1))))
   (print x)
   (hello 1)
-  (+ 1 2 3))
-
+  (print
+    (if 1 (+ 2 3) (+ 4 5)))
+  (comment (define sum
+             (lambda (n)
+               (if (== n 0) 1 (+ n (sum (- n 1))))))
+           (print (sum 10))))
