@@ -1,4 +1,6 @@
 (begin
+  (define hello
+    (lambda (ignore) (print 999)))
   (print print)
   (+ 1 (print (+ 2 3)))
   (print (lambda (x) (+ x 1)))
@@ -8,5 +10,6 @@
       (print x)
       (print (+ x 1))))
   (print x)
+  (hello 1)
   (+ 1 2 3))
 

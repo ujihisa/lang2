@@ -24,10 +24,6 @@ main = do
 evaluate :: P.Expr -> IO Value
 evaluate expr = fst `fmap` S.runStateT (evaluate' expr) M.empty
 
-evaluate' (P.Call func args) = do
-  args' <- mapM evaluate' args
-  func' <- evaluate' func
-  call func' args'
 evaluate' (P.Atom "print") = return $ Funcref "print" builtinPrint
 evaluate' (P.Atom "+") = return $ Funcref "+" builtinPlus
 evaluate' (P.Atom name) =
@@ -36,11 +32,16 @@ evaluate' (P.Atom name) =
           liftIO $ print $ "no Atom <" ++ name ++ ">"
           return $ Undefined
 evaluate' (P.Val x) = return $ IntValue x
-evaluate' (P.List (P.Atom x : xs)) = specialForm x xs
+evaluate' (P.List (P.Atom x : xs))
+  | x == "begin" || x == "let" || x == "define" || x == "lambda" = specialForm x xs
+evaluate' (P.List (func : args)) = do
+  args' <- mapM evaluate' args
+  func' <- evaluate' func
+  call func' args'
 
 specialForm "begin" [] = error "empty begin -- must not happen"
 specialForm "begin" xs = last `fmap` mapM evaluate' xs
-specialForm "let" [P.Atom name, val, body] = do
+specialForm "let" [P.List [P.Atom name, val], body] = do
   env <- S.get
   let before = M.lookup name env
   after <- evaluate' val
@@ -50,7 +51,13 @@ specialForm "let" [P.Atom name, val, body] = do
        Just x -> S.put $ M.insert name x env
        Nothing -> S.put $ M.delete name env
   return memo
-specialForm "let" _ = error "let requires 3 params"
+specialForm "let" _ = error "let requires 2 params"
+specialForm "define" [P.Atom name, val] = do
+  env <- S.get
+  val' <- evaluate' val
+  S.put $ M.insert name val' env
+  return val'
+specialForm "define" _ = error "define requires 2 params"
 specialForm "lambda" [P.List names, body] = do
   env <- S.get
   return $ Lambda (map unVar names) body env
@@ -58,6 +65,7 @@ specialForm "lambda" [P.List names, body] = do
     unVar (P.Atom x) = x
     unVar _ = error "omg"
 specialForm "lambda" _ = error "lambda requires 2 params"
+specialForm x _ = error x
 
 call (Funcref _ f) args = liftIO $ f args
 call (Lambda params body env) args = do
