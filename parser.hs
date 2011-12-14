@@ -1,13 +1,13 @@
 module Parser where
 
 import qualified Text.Parsec as P
-import Control.Applicative ((<|>))
+import Control.Applicative ((<|>), (*>), (<*))
 import qualified Control.Monad.State as S
 import Data.List (intersperse)
 
 data Expr = Begin [Expr]
   | Let String Expr Expr
-  | Call String [Expr]
+  | Call Expr [Expr]
   | Var String
   | Val Int
   | Lambda [String] Expr
@@ -29,9 +29,10 @@ formatExpr' (Let name value expr) = do
   return $ i ++ "(let (" ++ name ++ " " ++ value' ++ ")\n" ++ expr' ++ ")"
 formatExpr' (Var name) = return name
 formatExpr' (Val x) = return $ show x
-formatExpr' (Call name xs) = do
+formatExpr' (Call func xs) = do
+  func' <- liftDown $ formatExpr' func
   xs' <- liftDown $ mapM formatExpr' xs
-  return $ "(" ++ name ++ " " ++ concat (intersperse " " xs') ++ ")"
+  return $ "(" ++ func' ++ " " ++ concat (intersperse " " xs') ++ ")"
 
 liftDown f = do
   S.modify (+ 2)
@@ -50,38 +51,38 @@ main = do
 parse file = either (error . show) id $ P.parse parseExpr "parseExpr" file
 parseExpr = do
   P.skipMany P.space
-  expr <- parseBegin <|> parseLambda <|> parseLet <|> parseVal <|> parseVar <|> parseCall
+  expr <- parenth (parseBegin <|> parseLambda <|> parseLet)
+    <|> parseVal
+    <|> parseVar
+    <|> parenth parseCall
   return expr
 
+parenth f = P.try $ P.char '(' *> f <* P.char ')'
+
 parseBegin = P.try $ do
-  P.string "(begin"
+  P.string "begin"
   P.skipMany1 P.space
   xs <- parseExpr `P.sepBy1` P.many1 P.space
-  P.char ')'
   return $ Begin xs
 
 parseLambda = P.try $ do
-  P.string "(lambda"
+  P.string "lambda"
   P.skipMany1 P.space
-  P.char '('
-  names <- P.many1 (P.noneOf " )(") `P.sepBy` P.spaces
-  P.char ')'
+  names <- parenth $ P.many1 (P.noneOf " )(") `P.sepBy` P.spaces
   P.skipMany1 P.space
   expr <- parseExpr
-  P.char ')'
   return $ Lambda names expr
 
 parseLet = P.try $ do
-  P.string "(let"
+  P.string "let"
   P.skipMany1 P.space
-  P.char '('
-  name <- P.many1 $ P.noneOf " )"
-  P.skipMany1 P.space
-  value <- parseExpr
-  P.char ')'
+  (name, value) <- parenth $ do
+    name <- P.many1 $ P.noneOf " )"
+    P.skipMany1 P.space
+    value <- parseExpr
+    return (name, value)
   P.skipMany1 P.space
   body <- parseExpr
-  P.char ')'
   return $ Let name value body
 
 parseVal = P.try $ do
@@ -93,9 +94,5 @@ parseVar = P.try $ do
   return $ Var name
 
 parseCall = P.try $ do
-  P.char '('
-  name <- P.many1 $ P.noneOf " )"
-  xs <- parseExpr `P.sepBy1` P.many1 P.space
-  P.char ')'
-  return $ Call name xs
-
+  (x:xs) <- parseExpr `P.sepBy1` P.many1 P.space
+  return $ Call x xs

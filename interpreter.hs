@@ -2,6 +2,7 @@ import qualified Parser as P
 import qualified Control.Monad.Trans.State as S
 import Control.Monad.Trans (liftIO)
 import qualified Data.Map as M
+import Control.Monad (forM_)
 
 data Value = IntValue Int
   | Lambda [String] P.Expr (M.Map String Value)
@@ -32,12 +33,14 @@ evaluate' (P.Let name val body) = do
        Just x -> S.put $ M.insert name x env
        Nothing -> S.put $ M.delete name env
   return memo
-evaluate' (P.Call name args) = do
+evaluate' (P.Call func args) = do
   args' <- mapM evaluate' args
-  case name of
-       "+" -> funcallArb "+" args'
-       "print" -> funcall1 "print" (head args')
-       otherwise -> error "not such function"
+  case func of
+       (P.Var "+") -> funcallArb "+" args'
+       (P.Var "print") -> funcall1 "print" (head args')
+       otherwise -> do
+         func' <- evaluate' func
+         lambdacall func' args
 evaluate' (P.Var name) =
   (maybe noVar return . M.lookup name) =<< S.get
   where noVar = do
@@ -54,3 +57,12 @@ funcallArb "+" args = do
       liftIO $ print $ "<" ++ show x ++ "> isn't int"
       return 0
 funcall1 "print" x = liftIO $ print x >> return x
+lambdacall (Lambda params body env) args = do
+  args' <- mapM evaluate' args
+  backup <- S.get
+  S.put env
+  forM_ (zip params args') $ \(p, a) -> do
+    S.modify (M.insert p a)
+  retval <- evaluate' body
+  S.put backup
+  return retval
