@@ -1,4 +1,5 @@
 (begin
+  (print print)
   (+ 1 (print (+ 2 3)))
   (print (lambda (x) (+ x 1)))
   ((lambda (x) (print x)) 123)

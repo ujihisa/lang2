@@ -5,9 +5,14 @@ import qualified Data.Map as M
 import Control.Monad (forM_)
 
 data Value = IntValue Int
+  | Funcref String ([Value] -> IO Value)
   | Lambda [String] P.Expr (M.Map String Value)
   | Undefined
-  deriving Show
+instance Show Value where
+  show (IntValue i) = show i
+  show (Funcref name _) = "<funcref " ++ name ++ ">"
+  show (Lambda params expr env) = "<lambda " ++ show params ++ " " ++ show expr ++ " " ++ show env ++ ">"
+  show Undefined = "undefined"
 
 main = do
   file <- readFile "sample.lisp"
@@ -18,14 +23,13 @@ main = do
 
 evaluate :: P.Expr -> IO Value
 evaluate expr = fst `fmap` S.runStateT (evaluate' expr) M.empty
+
 evaluate' (P.Call func args) = do
   args' <- mapM evaluate' args
-  case func of
-       (P.Var "+") -> funcallArb "+" args'
-       (P.Var "print") -> funcall1 "print" (head args')
-       otherwise -> do
-         func' <- evaluate' func
-         lambdacall func' args'
+  func' <- evaluate' func
+  call func' args'
+evaluate' (P.Var "print") = return $ Funcref "print" builtinPrint
+evaluate' (P.Var "+") = return $ Funcref "+" builtinPlus
 evaluate' (P.Var name) =
   (maybe noVar return . M.lookup name) =<< S.get
   where noVar = do
@@ -55,16 +59,8 @@ specialForm "lambda" [P.List names, body] = do
     unVar _ = error "omg"
 specialForm "lambda" _ = error "lambda requires 2 params"
 
-funcallArb "+" args = do
-  args' <- mapM f args
-  return $ IntValue $ sum args'
-  where
-    f (IntValue x) = return x
-    f x = do
-      liftIO $ print $ "<" ++ show x ++ "> isn't int"
-      return 0
-funcall1 "print" x = liftIO $ print x >> return x
-lambdacall (Lambda params body env) args = do
+call (Funcref _ f) args = liftIO $ f args
+call (Lambda params body env) args = do
   backup <- S.get
   S.put env
   forM_ (zip params args) $ \(p, a) -> do
@@ -72,3 +68,15 @@ lambdacall (Lambda params body env) args = do
   retval <- evaluate' body
   S.put backup
   return retval
+
+builtinPrint [x] = do
+  print x
+  return x
+builtinPlus xs = do
+  args' <- mapM f xs
+  return $ IntValue $ sum args'
+  where
+    f (IntValue x) = return x
+    f x = do
+      print $ "<" ++ show x ++ "> isn't int"
+      return 0
