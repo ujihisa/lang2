@@ -5,34 +5,30 @@ import Control.Applicative ((<|>), (*>), (<*))
 import qualified Control.Monad.State as S
 import Data.List (intersperse)
 
-data Expr = Begin [Expr]
-  | Let String Expr Expr
+data Expr = List [Expr]
   | Call Expr [Expr]
   | Var String
   | Val Int
-  | Lambda [String] Expr
   deriving (Show, Read)
+
+join = concat . intersperse " "
 
 formatExpr :: Expr -> String
 formatExpr expr = fst $ S.runState (formatExpr' expr) 0
-formatExpr' (Begin xs) = do
-  xs' <- liftDown $ mapM formatExpr' xs
+formatExpr' (List xs) = do
+  (x:xs') <- liftDown $ mapM formatExpr' xs
   i <- indent
-  return $ i ++ "(begin\n" ++ concat (intersperse "\n" (map (("  " ++ i) ++) xs')) ++ ")"
-formatExpr' (Lambda names expr) = do
-  expr' <- liftDown $ formatExpr' expr
-  return $ "(lambda (" ++ concat (intersperse " " names) ++ ") " ++ expr' ++ ")"
-formatExpr' (Let name value expr) = do
-  value' <- formatExpr' value
-  expr' <- liftDown $ formatExpr' expr
-  i <- indent
-  return $ i ++ "(let (" ++ name ++ " " ++ value' ++ ")\n" ++ expr' ++ ")"
+  case x of
+     "begin" -> return $ i ++ "(begin" ++ "\n" ++ concat (intersperse "\n" (map (("  " ++ i) ++) xs')) ++ ")"
+     "let" -> return $ "(let (" ++ join (take 2 xs') ++ ")\n" ++ last xs' ++ ")"
+     "lambda" -> return $ "lambda " ++ head xs' ++ " " ++ last xs' ++ ")"
+     otherwise -> return $ "(" ++ join (x:xs') ++ ")"
 formatExpr' (Var name) = return name
 formatExpr' (Val x) = return $ show x
 formatExpr' (Call func xs) = do
   func' <- liftDown $ formatExpr' func
   xs' <- liftDown $ mapM formatExpr' xs
-  return $ "(" ++ func' ++ " " ++ concat (intersperse " " xs') ++ ")"
+  return $ "(" ++ func' ++ " " ++ join xs' ++ ")"
 
 liftDown f = do
   S.modify (+ 2)
@@ -63,7 +59,7 @@ parseBegin = P.try $ do
   P.string "begin"
   P.skipMany1 P.space
   xs <- parseExpr `P.sepBy1` P.many1 P.space
-  return $ Begin xs
+  return $ List $ Var "begin" : xs
 
 parseLambda = P.try $ do
   P.string "lambda"
@@ -71,7 +67,7 @@ parseLambda = P.try $ do
   names <- parenth $ P.many1 (P.noneOf " )(") `P.sepBy` P.spaces
   P.skipMany1 P.space
   expr <- parseExpr
-  return $ Lambda names expr
+  return $ List [Var "lambda", List (map Var names), expr]
 
 parseLet = P.try $ do
   P.string "let"
@@ -83,7 +79,7 @@ parseLet = P.try $ do
     return (name, value)
   P.skipMany1 P.space
   body <- parseExpr
-  return $ Let name value body
+  return $ List [Var "let", Var name, value, body]
 
 parseVal = P.try $ do
   n <- P.many1 P.digit

@@ -18,21 +18,6 @@ main = do
 
 evaluate :: P.Expr -> IO Value
 evaluate expr = fst `fmap` S.runStateT (evaluate' expr) M.empty
-evaluate' (P.Begin []) = error "empty begin -- must not happen"
-evaluate' (P.Begin xs) = last `fmap` mapM evaluate' xs
-evaluate' (P.Lambda names body) = do
-  env <- S.get
-  return $ Lambda names body env
-evaluate' (P.Let name val body) = do
-  env <- S.get
-  let before = M.lookup name env
-  after <- evaluate' val
-  S.put $ M.insert name after env
-  memo <- evaluate' body
-  case before of
-       Just x -> S.put $ M.insert name x env
-       Nothing -> S.put $ M.delete name env
-  return memo
 evaluate' (P.Call func args) = do
   args' <- mapM evaluate' args
   case func of
@@ -47,6 +32,28 @@ evaluate' (P.Var name) =
           liftIO $ print $ "no var <" ++ name ++ ">"
           return $ Undefined
 evaluate' (P.Val x) = return $ IntValue x
+evaluate' expr@(P.List (P.Var x : xs)) = specialForm x xs
+
+specialForm "begin" [] = error "empty begin -- must not happen"
+specialForm "begin" xs = last `fmap` mapM evaluate' xs
+specialForm "let" [P.Var name, val, body] = do
+  env <- S.get
+  let before = M.lookup name env
+  after <- evaluate' val
+  S.put $ M.insert name after env
+  memo <- evaluate' body
+  case before of
+       Just x -> S.put $ M.insert name x env
+       Nothing -> S.put $ M.delete name env
+  return memo
+specialForm "let" _ = error "let requires 3 params"
+specialForm "lambda" [P.List names, body] = do
+  env <- S.get
+  return $ Lambda (map unVar names) body env
+  where
+    unVar (P.Var x) = x
+    unVar _ = error "omg"
+specialForm "lambda" _ = error "lambda requires 2 params"
 
 funcallArb "+" args = do
   args' <- mapM f args
