@@ -40,7 +40,7 @@ evaluate' (P.Call func args) = do
        (P.Var "print") -> funcall1 "print" (head args')
        otherwise -> do
          func' <- evaluate' func
-         lambdacall func' args
+         lambdacall func' args'
 evaluate' (P.Var name) =
   (maybe noVar return . M.lookup name) =<< S.get
   where noVar = do
@@ -58,10 +58,9 @@ funcallArb "+" args = do
       return 0
 funcall1 "print" x = liftIO $ print x >> return x
 lambdacall (Lambda params body env) args = do
-  args' <- mapM evaluate' args
   backup <- S.get
   S.put env
-  forM_ (zip params args') $ \(p, a) -> do
+  forM_ (zip params args) $ \(p, a) -> do
     S.modify (M.insert p a)
   retval <- evaluate' body
   S.put backup
