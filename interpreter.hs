@@ -17,11 +17,12 @@ instance Show Value where
 type Env = M.Map String Value
 
 main = do
-  file <- readFile "sample.lisp"
+  file <- readFile "sample2.lisp"
   let expr = P.parse file
-  print expr
-  putStrLn $ P.formatExpr expr
-  print =<< evaluate expr
+  -- print expr
+  -- putStrLn $ P.formatExpr expr
+  --print =<< evaluate expr
+  evaluate expr
 
 evaluate :: P.Expr -> IO Value
 evaluate expr = fst `fmap` S.runStateT (evaluate' expr) [M.empty]
