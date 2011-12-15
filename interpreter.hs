@@ -3,6 +3,7 @@ import qualified Control.Monad.Trans.State as S
 import Control.Monad.Trans (liftIO)
 import qualified Data.Map as M
 import Control.Monad (forM_)
+import Control.Applicative ((<|>))
 
 data Value = IntValue Int
   | Funcref String ([Value] -> IO Value)
@@ -13,7 +14,7 @@ instance Show Value where
   show (Funcref name _) = "<funcref " ++ name ++ ">"
   show (Lambda params expr env) = "<lambda " ++ show params ++ " " ++ show expr ++ " " ++ show env ++ ">"
   show Undefined = "undefined"
-type Env = [M.Map String Value]
+type Env = M.Map String Value
 
 main = do
   file <- readFile "sample.lisp"
@@ -25,16 +26,21 @@ main = do
 evaluate :: P.Expr -> IO Value
 evaluate expr = fst `fmap` S.runStateT (evaluate' expr) [M.empty]
 
-evaluate' :: P.Expr -> S.StateT Env IO Value
+evaluate' :: P.Expr -> S.StateT [Env] IO Value
 evaluate' (P.Atom "print") = return $ Funcref "print" builtinPrint
 evaluate' (P.Atom "+") = return $ Funcref "+" builtinPlus
 evaluate' (P.Atom "-") = return $ Funcref "-" builtinMinus
 evaluate' (P.Atom "==") = return $ Funcref "-" builtinComp
-evaluate' (P.Atom name) =
-  (maybe noVar return . M.lookup name) =<< head `fmap` S.get
-  where noVar = do
-          liftIO $ print $ "no variable <" ++ name ++ ">"
-          return $ Undefined
+evaluate' (P.Atom name) = do
+  result <- varLookup' name
+  case result of
+       Just x -> return x
+       Nothing -> do
+         liftIO $ print $ "no variable <" ++ name ++ ">"
+         return $ Undefined
+  where
+    varLookup' name = (foldl (<|>) Nothing . map (M.lookup name)) `fmap` S.get
+
 evaluate' (P.Val x) = return $ IntValue x
 evaluate' (P.List (P.Atom x : xs))
   | x == "begin" || x == "let" || x == "define" || x == "lambda" || x == "if" || x == "comment" = specialForm x xs
@@ -46,21 +52,18 @@ evaluate' (P.List (func : args)) = do
 specialForm "begin" [] = error "empty begin -- must not happen"
 specialForm "begin" xs = last `fmap` mapM evaluate' xs
 specialForm "let" [P.List [P.Atom name, val], body] = do
-  env <- head `fmap` S.get
-  let before = M.lookup name env
-  after <- evaluate' val
-  S.put $ [M.insert name after env]
+  env <- S.get
+  val' <- evaluate' val
+  S.put $ M.fromList [(name, val')] : env
   memo <- evaluate' body
-  case before of
-       Just x -> S.put $ [M.insert name x env]
-       Nothing -> S.put $ [M.delete name env]
+  S.modify tail
   return memo
 specialForm "let" _ = error "let requires 2 params"
 specialForm "comment" _ = return Undefined
 specialForm "define" [P.Atom name, val] = do
-  env <- head `fmap` S.get
+  (e:env) <- S.get
   val' <- evaluate' val
-  S.put $ [M.insert name val' env]
+  S.put $ (M.insert name val' e) : env
   return val'
   -- case val' of
   --      Lambda params expr env -> do
@@ -73,7 +76,7 @@ specialForm "define" [P.Atom name, val] = do
 specialForm "define" _ = error "define requires 2 params"
 specialForm "lambda" [P.List names, body] = do
   env <- S.get
-  return $ Lambda (map unVar names) body env
+  return $ Lambda (map unVar names) body M.empty
   where
     unVar (P.Atom x) = x
     unVar _ = error "omg"
@@ -88,12 +91,10 @@ specialForm x _ = error x
 
 call (Funcref _ f) args = liftIO $ f args
 call (Lambda params body env) args = do
-  backup <- S.get
-  S.put env
-  forM_ (zip params args) $ \(p, a) -> do
-    S.modify ((:[]) . M.insert p a . head)
+  let env' = M.fromList (zip params args) `M.union` env
+  S.modify (env' :)
   retval <- evaluate' body
-  S.put backup
+  S.modify tail
   return retval
 
 builtinPrint [x] = do
