@@ -42,7 +42,7 @@ parseExpr = do
   P.skipMany P.space
   parseList <|> parseVal <|> parseAtom
 
-parseList = List `fmap` parenth (parseExpr `P.sepBy1` P.skipMany1 P.space)
+parseList = List `fmap` parenth (parseExpr `P.sepBy` P.skipMany1 P.space)
   where parenth f = P.try $ P.char '(' *> f <* P.char ')'
 
 parseVal = P.try $ do
