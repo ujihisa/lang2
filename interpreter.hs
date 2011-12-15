@@ -6,13 +6,14 @@ import Control.Monad (forM_)
 
 data Value = IntValue Int
   | Funcref String ([Value] -> IO Value)
-  | Lambda [String] P.Expr (M.Map String Value)
+  | Lambda [String] P.Expr Env
   | Undefined
 instance Show Value where
   show (IntValue i) = show i
   show (Funcref name _) = "<funcref " ++ name ++ ">"
   show (Lambda params expr env) = "<lambda " ++ show params ++ " " ++ show expr ++ " " ++ show env ++ ">"
   show Undefined = "undefined"
+type Env = [M.Map String Value]
 
 main = do
   file <- readFile "sample.lisp"
@@ -22,14 +23,15 @@ main = do
   print =<< evaluate expr
 
 evaluate :: P.Expr -> IO Value
-evaluate expr = fst `fmap` S.runStateT (evaluate' expr) M.empty
+evaluate expr = fst `fmap` S.runStateT (evaluate' expr) [M.empty]
 
+evaluate' :: P.Expr -> S.StateT Env IO Value
 evaluate' (P.Atom "print") = return $ Funcref "print" builtinPrint
 evaluate' (P.Atom "+") = return $ Funcref "+" builtinPlus
 evaluate' (P.Atom "-") = return $ Funcref "-" builtinMinus
 evaluate' (P.Atom "==") = return $ Funcref "-" builtinComp
 evaluate' (P.Atom name) =
-  (maybe noVar return . M.lookup name) =<< S.get
+  (maybe noVar return . M.lookup name) =<< head `fmap` S.get
   where noVar = do
           liftIO $ print $ "no variable <" ++ name ++ ">"
           return $ Undefined
@@ -44,21 +46,21 @@ evaluate' (P.List (func : args)) = do
 specialForm "begin" [] = error "empty begin -- must not happen"
 specialForm "begin" xs = last `fmap` mapM evaluate' xs
 specialForm "let" [P.List [P.Atom name, val], body] = do
-  env <- S.get
+  env <- head `fmap` S.get
   let before = M.lookup name env
   after <- evaluate' val
-  S.put $ M.insert name after env
+  S.put $ [M.insert name after env]
   memo <- evaluate' body
   case before of
-       Just x -> S.put $ M.insert name x env
-       Nothing -> S.put $ M.delete name env
+       Just x -> S.put $ [M.insert name x env]
+       Nothing -> S.put $ [M.delete name env]
   return memo
 specialForm "let" _ = error "let requires 2 params"
 specialForm "comment" _ = return Undefined
 specialForm "define" [P.Atom name, val] = do
-  env <- S.get
+  env <- head `fmap` S.get
   val' <- evaluate' val
-  S.put $ M.insert name val' env
+  S.put $ [M.insert name val' env]
   return val'
   -- case val' of
   --      Lambda params expr env -> do
@@ -89,7 +91,7 @@ call (Lambda params body env) args = do
   backup <- S.get
   S.put env
   forM_ (zip params args) $ \(p, a) -> do
-    S.modify (M.insert p a)
+    S.modify ((:[]) . M.insert p a . head)
   retval <- evaluate' body
   S.put backup
   return retval
