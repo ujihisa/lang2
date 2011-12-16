@@ -7,15 +7,16 @@ import Control.Applicative ((<|>))
 
 data Value = IntValue Int
   | Funcref String ([Value] -> IO Value)
-  | Lambda [String] P.Expr Env
+  | Lambda [String] P.Expr [Env]
   | Undefined
 instance Show Value where
   show (IntValue i) = show i
   show (Funcref name _) = "<funcref " ++ name ++ ">"
-  show (Lambda params expr env) = "<lambda " ++ show params ++ " " ++ show expr ++ " " ++ show env ++ ">"
+  show (Lambda params expr envs) = "<lambda " ++ show params ++ " " ++ show expr ++ " " ++ show envs ++ ">"
   show Undefined = "undefined"
 type Env = M.Map String Value
 
+main :: IO ()
 main = do
   file <- readFile "sample2.lisp"
   let expr = P.parse file
@@ -23,6 +24,7 @@ main = do
   -- putStrLn $ P.formatExpr expr
   --print =<< evaluate expr
   evaluate expr
+  return ()
 
 evaluate :: P.Expr -> IO Value
 evaluate expr = fst `fmap` S.runStateT (evaluate' expr) [M.empty]
@@ -44,12 +46,13 @@ evaluate' (P.Atom name) = do
 
 evaluate' (P.Val x) = return $ IntValue x
 evaluate' (P.List (P.Atom x : xs))
-  | x == "begin" || x == "let" || x == "define" || x == "lambda" || x == "if" || x == "comment" = specialForm x xs
+  | x `elem` ["begin", "let", "define", "lambda", "if", "comment"] = specialForm x xs
 evaluate' (P.List (func : args)) = do
   args' <- mapM evaluate' args
   func' <- evaluate' func
   call func' args'
 
+specialForm :: String -> [P.Expr] -> S.StateT [Env] IO Value
 specialForm "begin" [] = error "empty begin -- must not happen"
 specialForm "begin" xs = last `fmap` mapM evaluate' xs
 specialForm "let" [P.List [P.Atom name, val], body] = do
@@ -64,7 +67,7 @@ specialForm "comment" _ = return Undefined
 specialForm "define" [P.Atom name, val] = do
   (e:env) <- S.get
   val' <- evaluate' val
-  S.put $ (M.insert name val' e) : env
+  S.put $ M.insert name val' e : env
   return val'
   -- case val' of
   --      Lambda params expr env -> do
@@ -77,7 +80,7 @@ specialForm "define" [P.Atom name, val] = do
 specialForm "define" _ = error "define requires 2 params"
 specialForm "lambda" [P.List names, body] = do
   env <- S.get
-  return $ Lambda (map unVar names) body M.empty
+  return $ Lambda (map unVar names) body env
   where
     unVar (P.Atom x) = x
     unVar _ = error "omg"
@@ -91,8 +94,8 @@ specialForm "if" _ = error "if requires 3 params"
 specialForm x _ = error x
 
 call (Funcref _ f) args = liftIO $ f args
-call (Lambda params body env) args = do
-  let env' = M.fromList (zip params args) `M.union` env
+call (Lambda params body envs) args = do
+  let env' = M.fromList (zip params args) `M.union` head envs
   S.modify (env' :)
   retval <- evaluate' body
   S.modify tail

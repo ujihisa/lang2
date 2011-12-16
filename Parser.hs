@@ -12,6 +12,8 @@ data Expr = List [Expr]
 
 formatExpr :: Expr -> String
 formatExpr expr = fst $ S.runState (formatExpr' expr) 0
+
+formatExpr' :: Expr -> S.State Int String
 formatExpr' (List xs) = do
   (x:xs') <- liftDown $ mapM formatExpr' xs
   i <- indent
@@ -19,7 +21,7 @@ formatExpr' (List xs) = do
      "begin" -> return $ i ++ "(begin" ++ "\n" ++ intercalate "\n" (map (("  " ++ i) ++) xs') ++ ")"
      "let" -> return $ "(let " ++ head xs' ++ "\n" ++ last xs' ++ ")"
      "lambda" -> return $ "(lambda" ++ head xs' ++ "\n" ++ i ++ last xs' ++ ")"
-     otherwise -> return $ "(" ++ unwords (x:xs') ++ ")"
+     _ -> return $ "(" ++ unwords (x:xs') ++ ")"
 formatExpr' (Atom name) = return name
 formatExpr' (Val x) = return $ show x
 
@@ -40,7 +42,11 @@ main = do
 parse file = either (error . show) id $ P.parse parseExpr "parseExpr" file
 parseExpr = do
   P.skipMany P.space
+  skipComment
   parseList <|> parseVal <|> parseAtom
+
+skipComment =
+  P.skipMany (P.char ';' >> P.many (P.noneOf "\n") >> P.char '\n')
 
 parseList = List `fmap` parenth (parseExpr `P.sepBy` P.skipMany1 P.space)
   where parenth f = P.try $ P.char '(' *> f <* P.char ')'
