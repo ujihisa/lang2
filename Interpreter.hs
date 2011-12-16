@@ -4,16 +4,22 @@ import Control.Monad.Trans (liftIO)
 import qualified Data.Map as M
 import Control.Monad (forM_)
 import Control.Applicative ((<|>))
+import Data.Maybe (fromJust) -- temporary
 
 data Value = IntValue Int
   | Funcref String ([Value] -> IO Value)
-  | Lambda [String] P.Expr [Env]
+  | LambdaValue Lambda
   | Undefined
 instance Show Value where
   show (IntValue i) = show i
   show (Funcref name _) = "<funcref " ++ name ++ ">"
-  show (Lambda params expr envs) = "<lambda " ++ show params ++ " " ++ show expr ++ " " ++ show envs ++ ">"
+  show (LambdaValue (Lambda lambdaId params expr)) = "<lambda " ++ show lambdaId ++ " " ++ show params ++ " " ++ show expr ++ ">"
   show Undefined = "undefined"
+data Lambda = Lambda Int [String] P.Expr deriving Show
+instance Eq Lambda where
+  (Lambda a _ _) == (Lambda b _ _) = a == b
+instance Ord Lambda where
+  (Lambda a _ _) < (Lambda b _ _) = a < b
 type Env = M.Map String Value
 
 main :: IO ()
@@ -26,10 +32,18 @@ main = do
   evaluate expr
   return ()
 
-evaluate :: P.Expr -> IO Value
-evaluate expr = fst `fmap` S.runStateT (evaluate' expr) [M.empty]
+initialState :: ([Lambda], M.Map [Lambda] Env)
+initialState = ([], M.insert [] M.empty M.empty)
 
-evaluate' :: P.Expr -> S.StateT [Env] IO Value
+getEnv :: [Lambda] -> S.StateT ([Lambda], M.Map [Lambda] Env) IO Env
+getEnv lambda = do
+  x <- snd `fmap` S.get
+  return $ fromJust $ M.lookup lambda x
+
+evaluate :: P.Expr -> IO Value
+evaluate expr = fst `fmap` S.runStateT (evaluate' expr) initialState
+
+evaluate' :: P.Expr -> S.StateT ([Lambda], M.Map [Lambda] Env) IO Value
 evaluate' (P.Atom "print") = return $ Funcref "print" builtinPrint
 evaluate' (P.Atom "+") = return $ Funcref "+" builtinPlus
 evaluate' (P.Atom "-") = return $ Funcref "-" builtinMinus
@@ -42,7 +56,16 @@ evaluate' (P.Atom name) = do
          liftIO $ print $ "no variable <" ++ name ++ ">"
          return $ Undefined
   where
-    varLookup' name = (foldl (<|>) Nothing . map (M.lookup name)) `fmap` S.get
+    varLookup' :: String -> S.StateT ([Lambda], M.Map [Lambda] Env) IO (Maybe Value)
+    varLookup' name = do
+      closure <- fst `fmap` S.get
+      env <- getEnv closure
+      case M.lookup name env of
+           Just x -> return $ Just x
+           Nothing -> do
+             env <- getEnv $ tail closure
+             return $ M.lookup name env
+    --varLookup' name = (foldl (<|>) Nothing . map (M.lookup name)) `fmap` S.get
 
 evaluate' (P.Val x) = return $ IntValue x
 evaluate' (P.List (P.Atom x : xs))
@@ -52,23 +75,31 @@ evaluate' (P.List (func : args)) = do
   func' <- evaluate' func
   call func' args'
 
-specialForm :: String -> [P.Expr] -> S.StateT [Env] IO Value
+specialForm :: String -> [P.Expr] -> S.StateT ([Lambda], M.Map [Lambda] Env) IO Value
 specialForm "begin" [] = error "empty begin -- must not happen"
 specialForm "begin" xs = last `fmap` mapM evaluate' xs
 specialForm "let" [P.List [P.Atom name, val], body] = do
-  env <- S.get
-  val' <- evaluate' val
-  S.put $ M.fromList [(name, val')] : env
-  memo <- evaluate' body
-  S.modify tail
-  return memo
+  return $ IntValue 79
+  -- env <- S.get
+  -- val' <- evaluate' val
+  -- S.put $ M.fromList [(name, val')] : env
+  -- memo <- evaluate' body
+  -- S.modify tail
+  -- return memo
 specialForm "let" _ = error "let requires 2 params"
 specialForm "comment" _ = return Undefined
 specialForm "define" [P.Atom name, val] = do
-  (e:env) <- S.get
   val' <- evaluate' val
-  S.put $ M.insert name val' e : env
+
+  (closure, x) <- S.get
+  env <- getEnv closure
+  --let toplevel = fromJust $ M.lookup [] x
+  let env' = M.insert name val' env
+  let x' = M.insert closure env' x
+  S.put (closure, x')
+  --S.put $ M.insert name val' e : env
   return val'
+
   -- case val' of
   --      Lambda params expr env -> do
   --        let val'' = Lambda params expr $ M.insert name val' env
@@ -79,9 +110,19 @@ specialForm "define" [P.Atom name, val] = do
   --        return val'
 specialForm "define" _ = error "define requires 2 params"
 specialForm "lambda" [P.List names, body] = do
-  env <- S.get
-  return $ Lambda (map unVar names) body env
+  lambdaId <- getNewLambdaId
+  let lambda = Lambda lambdaId (map unVar names) body
+  (c, x) <- S.get
+  S.put (c, M.insert [lambda] M.empty x)
+  return $ LambdaValue $ lambda
   where
+    getNewLambdaId :: S.StateT ([Lambda], M.Map [Lambda] Env) IO Int
+    getNewLambdaId = do
+      return 1 -- FIXME
+      -- x <- snd `fmap` S.get
+      -- return $ (+ 1) $ maximum $ map (fromLambda . head . fst) $ M.toList x
+    fromLambda :: Lambda -> Int
+    fromLambda (Lambda lambdaId _ _) = lambdaId
     unVar (P.Atom x) = x
     unVar _ = error "omg"
 specialForm "lambda" _ = error "lambda requires 2 params"
@@ -94,12 +135,30 @@ specialForm "if" _ = error "if requires 3 params"
 specialForm x _ = error x
 
 call (Funcref _ f) args = liftIO $ f args
-call (Lambda params body envs) args = do
-  let env' = M.fromList (zip params args) `M.union` head envs
-  S.modify (env' :)
+call (LambdaValue (Lambda lambdaId params body)) args = do
+  --let env' = M.fromList (zip params args) `M.union` head envs
+  --closure <- getClosure lmd
+  (currentClosure, x) <- S.get
+  closure <- getClosureByLID lambdaId
+  env <- getEnv closure
+  let env' = M.fromList (zip params args) `M.union` env
+  let x' = M.insert closure env' x
+  --liftIO $ print x'
+  S.put (closure, x')
+  --S.modify (env' :)
   retval <- evaluate' body
-  S.modify tail
+  --x'' <- snd `fmap` S.get
+  S.put (currentClosure, x')
+  --S.modify tail
   return retval
+  where
+    getClosureByLID :: Int -> S.StateT ([Lambda], M.Map [Lambda] Env) IO [Lambda]
+    getClosureByLID lambdaId = do
+      x <- snd `fmap` S.get
+      return $ fst $ last $ M.toList x
+      --return $ error "123"
+      -- x <- snd `fmap` S.get
+      -- return $ head $ head $ M.toList $ M.filter (\((Lambda i _ _):_) -> i == lambdaId) x
 
 builtinPrint [x] = do
   print x
